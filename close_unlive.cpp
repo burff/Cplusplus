@@ -1,4 +1,5 @@
 #include "sort_timer_list.h"
+#include <asm-generic/errno-base.h>
 #include <csignal>
 #include <strings.h>
 #include <sys/types.h>
@@ -111,5 +112,127 @@ int main(int argc, char* argv[])
     setnonblocking(pipefd[1]);
     addfd(epollfd, pipefd[0]);
 
+    addsig(SIGALRM);
+    addsig(SIGTERM);
+    bool stop_server = false;
+    
+    client_data* users = new client_data[FD_LIMIT];
+    bool timeout = false;
+    alarm(TIMESLOT);
+
+    while(!stop_server)
+    {
+        int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
+        if((number < 0) && (errno != EINTR))
+        {
+            printf("epoll failure\n");
+            break;
+        }
+
+        for(int i = 0; i < number; i++)
+        {
+            int sockfd = events[i].data.fd;
+            if(sockfd == listenfd)
+            {
+                struct sockaddr_in client_address;
+                socklen_t client_addrlength = sizeof(client_address);
+                int connfd = accept(listenfd, (struct sockaddr*)&client_address, &client_addrlength);
+                
+                addfd(epollfd, connfd);
+                users[connfd].address = client_address;
+                users[connfd].sockfd = connfd;
+
+                Util_timer* timer = new Util_timer;
+                timer->user_data_ = &users[connfd];
+                timer->cb_func = cb_func;
+                time_t cur = time(NULL);
+                timer->expire_ = cur + 3 * TIMESLOT;
+                users[connfd].timer = timer;
+                timer_lst.add_timer(timer);
+            }
+            else if((sockfd == pipefd[0]) && (events[i].events & EPOLLIN))
+            {
+                int sig;
+                char signals[1024];
+                ret = recv(pipefd[0], signals, sizeof(signals), 0);
+                if(ret == -1)
+                {
+                    continue;
+                }
+                else if(ret == 0)
+                {
+                    continue;
+                }
+                else
+                {
+                    for(int i = 0; i < 0; ++i)
+                    {
+                        switch(signals[i])
+                        {
+                            case SIGALRM:
+                            {
+                                timeout = true;
+                                break;
+                            }
+                            case SIGTERM:
+                            {
+                                stop_server = true;
+                            }
+                        }
+                    }
+                }
+            }
+            else if(events[i].events & EPOLLIN)
+            {
+                memset(users[sockfd].buf, '\0', BUFFER_SIZE);
+                ret = recv(sockfd, users[sockfd].buf, BUFFER_SIZE-1, 0);
+                printf("get %d bytes of client data %s from %d\n", ret, users[sockfd].buf, sockfd);
+                Util_timer* timer = users[sockfd].timer;
+                if(ret < 0)
+                {
+                    if(errno != EAGAIN)
+                    {
+                        cb_func(&users[sockfd]);
+                        if(timer)
+                        {
+                            timer_lst.del_timer(timer);
+                        }
+                    }
+                }
+                else if(ret == 0)
+                {
+                    cb_func(&users[sockfd]);
+                    if(timer)
+                    {
+                        timer_lst.del_timer(timer);
+                    }
+                }
+                else
+                {
+                    if(timer)
+                    {
+                        time_t cur = time(NULL);
+                        timer->expire_ = cur + 3 * TIMESLOT;
+                        printf("adjust timer once\n");
+                        timer_lst.adjust_timer(timer);
+                    }
+                }
+            }
+            else
+            {
+
+            }
+        }
+        if(timeout)
+        {
+            timer_handler();
+            timeout = false;
+        }
+    }
+
+    close(listenfd);
+    close(pipefd[1]);
+    close(pipefd[0]);
+    delete[] users;
     return 0;
 }
