@@ -77,20 +77,21 @@ void cb_func(client_data* user_data)
 
 int main(int argc, char* argv[])
 {
-    if(argc < 3)
+    if(argc < 2)
     {
-        printf("usage: %s ip_address port_number\n", basename(argv[0]));
+        printf("usage: %s port_number\n", basename(argv[0]));
         return 1;
     }
-    const char* ip = argv[1];
-    int port = atoi(argv[2]);
+
+    int port = atoi(argv[1]);
 
     int ret = 0;
     struct sockaddr_in address;
 
     bzero(&address, sizeof(address));
     address.sin_family = AF_INET;
-    inet_pton(AF_INET, ip, &address.sin_addr);
+    //inet_pton(AF_INET, ip, &address.sin_addr);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
     address.sin_port = htons(port);
 
     int listenfd = socket(PF_INET, SOCK_STREAM, 0);
@@ -165,7 +166,7 @@ int main(int argc, char* argv[])
                 }
                 else
                 {
-                    for(int i = 0; i < 0; ++i)
+                    for(int i = 0; i < ret; ++i)
                     {
                         switch(signals[i])
                         {
